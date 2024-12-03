@@ -1,0 +1,498 @@
+<script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+<link rel="stylesheet" href="./app.css" />
+<div id="app">
+  <h1>Welcome to Assignment 1 - View Weather Data</h1>
+
+  <br />
+  Please insert name of city you would like to view data on.
+  <br />
+  <br />
+  City: <input v-model="city" /> <br /><br />
+  <button v-on:click="getAllData">Get forecast for next 4 days</button>
+  <br />
+  <br />
+
+  <!-- Do not try and display any information until the all the fetching of data and the summary table is completed -->
+  <span v-if="allDataCollected">
+    <p v-if="hasRainfall">
+      Packing: bring an umbrella because it is going to rain within the next 4
+      days.
+    </p>
+    <p v-else>
+      Packing: you do not need to bring an umbrella because it is not going to
+      rain within the next 4 days.
+    </p>
+
+    <!-- &#8451; is used for degrees celsius symbol -->
+    <p v-if="average4DayTemperature<12">
+      Type of weather: pack for cold weather since the average temperature over
+      the next 4 days is {{ average4DayTemperature }}&#8451;.
+    </p>
+    <p v-else-if="average4DayTemperature>=12 && average4DayTemperature <=24">
+      Type of weather: pack for mild weather since the average temperature over
+      the next 4 days is {{ average4DayTemperature }}&#8451;.
+    </p>
+    <p v-else>
+      Type of weather: pack for hot weather since the average temperature over
+      the next 4 days is {{ average4DayTemperature }}&#8451;.
+    </p>
+
+    <br />
+    <!-- &#8451; is used for degrees celsius symbol -->
+    Summary Table
+
+    <br />
+    <br />
+
+    <span v-for="dayData in tableDataOf4Days">
+      <table>
+        <!-- Only want headings once -->
+        <tr v-if="dayData == tableDataOf4Days[0]">
+          <th>Day</th>
+          <th>Avg. Temperature</th>
+          <th>Avg. Windspeed</th>
+          <th>Avg. Rainfall</th>
+          <th>Max UV Index</th>
+          <th>Time of Max UV Index</th>
+          <th>Need Suncream</th>
+          <th>Sunset</th>
+          <th>Sunrise</th>
+        </tr>
+        <tr>
+          <td>{{ dayData.day }}</td>
+          <td>{{ dayData["average temperature"] }}&#8451;</td>
+          <td>{{ dayData["average windspeed"] }}m/s</td>
+          <td>{{ dayData["average rainfall level"] }}mm</td>
+          <td>{{ dayData.maxUV }}</td>
+          <td>{{ dayData.maxUVTime }}</td>
+          <td v-if="dayData.maxUV > 3">Yes</td>
+          <td v-else>No</td>
+          <td>{{ dayData.sunriseStart }} - {{ dayData.sunriseEnd }}</td>
+          <td>{{ dayData.sunsetStart }} - {{ dayData.sunsetEnd }}</td>
+        </tr>
+      </table>
+    </span>
+
+    <br />
+
+    <span v-if="airIsPolluted">
+      Pollution: the highest pm2_5 over the next 5 days is {{ highestPM2_5 }},
+      we advise you wear a mask.
+    </span>
+
+    <span v-else>
+      Pollution: the highest pm2_5 over the next 5 days is {{ highestPM2_5 }},
+      you do not need to wear a mask.
+    </span>
+
+    <br />
+    <br />
+    We advise you pack and wear suncream on the days where the UV Index exceeds
+    3, as seen in the above table.
+  </span>
+</div>
+
+<!-- Vue app  -->
+<script>
+  var app = new Vue({
+    el: "#app",
+    data: {
+      city: "",
+      nextFourDaysWeatherData: [],
+      pollutionData: [],
+      average4DayTemperature: NaN,
+      windSpeed: NaN,
+      hasRainfall: false,
+      airIsPolluted: false,
+      highestPM2_5: NaN,
+      longitude: NaN, // no longitude or latitude until city name is specified
+      latitude: NaN,
+      tableDataOf4Days: [],
+      allDataCollected: false,
+      next4DaysNames: [], // Monday, or Sunday or Thursday etc.
+      next4ISODates: [],
+      uvData: [],
+    },
+
+    methods: {
+      /*
+       *   Main method to call all other functions
+       */
+      getAllData: async function () {
+        return new Promise(async (resolve, reject) => {
+          this.resetData();
+          await this.fetchCoordinatesOfCity();
+          this.setNext4ISODates();
+
+          await this.fetchUVIndexData();
+
+          await this.fetchNext5DaysWeatherForecast();
+          await this.checkRainfall();
+
+          await this.fetchNext5DaysPollutionForecast();
+          await this.checkAirPollutionLevel();
+
+          await this.setNext4DaysNames();
+          await this.createWeatherForecastSummaryTable();
+          resolve();
+        });
+      },
+
+      /* When user types in new city, or error, do not keep previous values on screen */
+      resetData: function () {
+        this.nextFourDaysWeatherData = [];
+        this.pollutionData = [];
+        this.average4DayTemperature = 0;
+        this.windSpeed = 5;
+        this.hasRainfall = false;
+        this.airIsPolluted = false;
+        this.highestPM2_5 = 0;
+        this.longitude = NaN; // no longitude or latitude until city name is specified
+        this.latitude = NaN;
+        this.tableDataOf4Days = [];
+        this.allDataCollected = false;
+        this.next4Days = [];
+      },
+
+      fetchCoordinatesOfCity: function () {
+        return new Promise((resolve, reject) => {
+          try {
+            fetch("http://localhost:3000/getCoordinates/:" + this.city + "/")
+              // returns Response object from fetch call
+              .then((response) => {
+                return response.json(); // now JSON version of response above
+              })
+              // error handling is when response == []
+              .then((response) => {
+                if (JSON.stringify(response) == "[]") {
+                  alert("Invalid city name entered! Try again.");
+                  throw new Error("Invalid city name entered");
+                } else {
+                  this.latitude = response[0].lat;
+                  this.longitude = response[0].lon;
+                }
+                resolve();
+              });
+          } catch (exception) {
+            console.log("Error: " + exception);
+          }
+        });
+      },
+
+      /*
+       *   My unique feature is to get the UV Index and sunset and sunrise data from the Open UV API
+       *   Need to get next 4 days in their UCT ISO-8601 date form to get UV Index data from the Open UV API
+       */
+      setNext4ISODates: function () {
+        let day = new Date(); // get today's date
+        day.setDate(day.getDate() + 1); // 1st day should be tomorrow because we want next 4 days
+        for (let i = 0; i < 4; i++) {
+          this.next4ISODates[i] = day.toISOString(); // Date must be in ISO-8601 format
+          day.setDate(day.getDate() + 1); // increment day to day after current day
+        }
+      },
+
+      fetchUVIndexData: function () {
+        return new Promise(async (resolve, reject) => {
+          for (let i = 0; i < this.next4ISODates.length; i++) {
+            await fetch(
+              "http://localhost:3000/uvIndexToday/" +
+                this.latitude +
+                "/" +
+                this.longitude +
+                "/" +
+                this.next4ISODates[i] +
+                "/"
+            )
+              // returns Response object from fetch call
+              .then(async (response) => {
+                if (response.status != 200) {
+                  response = await response.text();
+                  alert(
+                    "Invalid latitude and longitude provided for UV Index, check city name is entered correctly" +
+                      "\n\nHave you exceed your daily API limit of 50 calls per day?"
+                  );
+                  throw new Error(response);
+                } else {
+                  return response.json();
+                }
+              })
+              .then((response) => {
+                this.extractRelevantUVIndexData(response);
+              });
+          }
+          resolve();
+        });
+      },
+
+      /*
+       *  Extract relevant data from OpenUV API response:
+       *      maxUV and the maxUVTime,
+       *      sunriseStart and finish
+       *      sunset start and finish
+       *
+       *  Times are displayed in UCT format, e.g.,: 2022-10-22T22:40:10.838Z.
+       *  Calling displayHoursAndMinutes() helper to change to 22:40 for user
+       */
+      extractRelevantUVIndexData: function (response) {
+        let uvDate = {
+          maxUV: Number(response.result.uv_max.toFixed(2)),
+          maxUVTime: this.displayHoursAndMinutes(response.result.uv_max_time),
+          sunriseStart: this.displayHoursAndMinutes(
+            response.result.sun_info.sun_times.sunrise
+          ),
+          sunriseEnd: this.displayHoursAndMinutes(
+            response.result.sun_info.sun_times.sunriseEnd
+          ),
+          sunsetStart: this.displayHoursAndMinutes(
+            response.result.sun_info.sun_times.sunsetStart
+          ),
+          sunsetEnd: this.displayHoursAndMinutes(
+            response.result.sun_info.sun_times.sunset
+          ),
+        };
+        this.uvData.push(uvDate);
+      },
+
+      /*
+       *  Helper to display time in user friendly form, e.g.: 07:10am
+       */
+      displayHoursAndMinutes: function (stringDate) {
+        let dateObject = new Date(stringDate);
+        let hours = String(dateObject.getHours());
+        if (hours < 10) {
+          hours = "0" + hours;
+        }
+        let minutes = dateObject.getMinutes();
+        if (minutes < 10) {
+          minutes = "0" + minutes;
+        }
+        let hoursAndMinutesForm = hours + ":" + minutes;
+        return hoursAndMinutesForm;
+      },
+
+      /*
+       *   Only want next 4 days but OpenWeatherMap API only provides 5 day 3-hour interval forecast for free
+       *   After receiving data for the next 5 days, the trim5DaysDataTo4DaysData() method is called to remove the unnecessary 1st day's data
+       *   We do not want today's data, only want to display NEXT 4 days
+       */
+      fetchNext5DaysWeatherForecast: function () {
+        return new Promise(async (resolve, reject) => {
+          await fetch(
+            "http://localhost:3000/next5DaysWeatherData/" +
+              this.latitude +
+              "/" +
+              this.longitude +
+              "/"
+          ) // this returns instance of Response class
+            .then((response) => {
+              return response.json(); // return JSON version of data
+            })
+            .then(async (jsonData) => {
+              // error handling for empty response to stop continuing with code
+              if (jsonData.cod != 200) {
+                alert("Invalid city name entered! Try again.");
+                throw new Error("Invalid city name entered");
+              } else {
+                await this.trim5DaysDataTo4DaysData(jsonData);
+              }
+            });
+          resolve();
+        });
+      },
+
+      /*
+       *   Again, only want next 4 days but OpenWeatherMap API only provides 5 day 3-hour interval forecast for free
+       *   After receiving data for the next 5 days, this method is called to remove the unnecessary 1st day's data (want NEXT 4 days)
+       */
+      trim5DaysDataTo4DaysData: function (jsonData) {
+        return new Promise(async (resolve, reject) => {
+          let dataList = jsonData.list;
+          dataList.splice(0, 8); // convert 5 days of data into 4 days, list array has 40 objects [] containing data, make this 32
+          this.nextFourDaysWeatherData = dataList;
+          resolve();
+        });
+      },
+
+      /* Check if it is going to rain */
+      checkRainfall: function () {
+        let rainDetected = false;
+        return new Promise((resolve, reject) => {
+          for (const item of this.nextFourDaysWeatherData) {
+            if (item.rain) {
+              rainDetected = true;
+              resolve(true);
+              break;
+            }
+          }
+          if (rainDetected) {
+            this.hasRainfall = true;
+          } else {
+            this.hasRainfall = false;
+            resolve(false);
+          }
+        });
+      },
+
+      /*
+       *   We are looking for next 5 days' pollution data so do not need to trim the result to 4 days worth of data
+       */
+      fetchNext5DaysPollutionForecast: function () {
+        return new Promise((resolve, reject) => {
+          fetch(
+            "http://localhost:3000/next5DaysAirPollution/" +
+              this.latitude +
+              "/" +
+              this.longitude +
+              "/"
+          )
+            .then((response) => {
+              // response is instance of Response class
+              return response.json(); //  need to convert it to JSON object format
+            })
+            .then((response) => {
+              this.pollutionData = response;
+              resolve(this.pollutionData);
+            });
+        });
+      },
+
+      /*
+       *   Checking air pollution level to decide whether to advise user to wear a mask or not
+       */
+      checkAirPollutionLevel: function () {
+        return new Promise((resolve, reject) => {
+          let list = this.pollutionData.list;
+          for (const item of list) {
+            this.highestPM2_5 = Math.max(
+              item.components.pm2_5,
+              this.highestPM2_5
+            );
+            if (item.components.pm2_5 > 10) {
+              this.airIsPolluted = true;
+              break;
+            }
+          }
+          resolve();
+        });
+      },
+
+      /*
+       *   0 is Sunday, 1 is Monday...
+       *   Need name of day to display to user. Want to display Sunday, not 0, Monday, not 1.
+       */
+      setNext4DaysNames: function () {
+        currentDayIndex = new Date().getDay(); // Sunday is 0, Monday is 1.
+        nextDayIndex = currentDayIndex + 1; // start on tomorrow for NEXT day
+        let progress = 0; // if we reset i then the for loop never ends
+        for (let i = 0; i < 4; i++) {
+          if (nextDayIndex + progress > 6) {
+            nextDayIndex = 0; // Monday comes after Sunday
+            progress = 0; // when we need day after Sunday, go back to 0 (Monday)
+            this.next4Days[i] = this.getDayAsString(nextDayIndex + progress);
+          } else {
+            this.next4Days[i] = this.getDayAsString(nextDayIndex + progress);
+          }
+          progress++;
+        }
+      },
+
+      /*
+       *   0 is Sunday, 1 is Monday etc.
+       *   This is helper method to convert index of day of week to its String representation.
+       */
+      getDayAsString: function (dayNumber) {
+        daysOfWeek = [
+          "Sunday",
+          "Monday",
+          "Tuesday",
+          "Wednesday",
+          "Thursday",
+          "Friday",
+          "Saturday",
+          "Sunday",
+        ];
+        if (dayNumber <= 6 && dayNumber >= 0) {
+          return daysOfWeek[dayNumber];
+        }
+        throw new Error("Invalid day number entered!");
+      },
+
+      /*
+       *  Give a summary table for the next 4 days showing:
+       *      Temperature
+       *      Wind Speed and
+       *      Rainfall level
+       *
+       *  My unique features includes the max UV Index of the day, when this is, and when sunrise and sunset start and end
+       */
+      createWeatherForecastSummaryTable: function () {
+        return new Promise(async (resolve, reject) => {
+          for (let j = 0; j < 4; j++) {
+            await this.getAverageValuesForEachDay(j);
+          }
+          await this.getAverageTemperatureOver4Days();
+          this.allDataCollected = true;
+          resolve(this.tableDataOf4Days);
+          reject(new Error("cannot get summary table data"));
+        });
+      },
+
+      /*
+       *  Helper method to populate each day's data for the forecast summary table
+       */
+      getAverageValuesForEachDay: function (j) {
+        return new Promise((resolve, reject) => {
+          let tempTemperature = 0;
+          let tempWindSpeed = 0;
+          let tempRainfall = 0;
+          let i2 = j * 8; // each day has 8 data points, to move onto next day, make sure not to begin on index 0 again
+          for (let i = 0; i < 8; i++) {
+            tempTemperature += this.nextFourDaysWeatherData[i + i2].main.temp;
+            tempWindSpeed += this.nextFourDaysWeatherData[i + i2].wind.speed;
+            if (this.nextFourDaysWeatherData[i + i2].rain) {
+              tempRainfall += this.nextFourDaysWeatherData[i + i2].rain["3h"];
+            }
+          }
+          tempTemperature /= 8; // get average temperature of next day
+          tempWindSpeed /= 8;
+          tempRainfall /= 8;
+          /* Round the values to 2 decimal points */
+          tempTemperature = Number(tempTemperature.toFixed(2));
+          tempWindSpeed = Number(tempWindSpeed.toFixed(2));
+          tempRainfall = Number(tempRainfall.toFixed(2));
+          this.tableDataOf4Days[j] = {
+            day: this.next4Days[j],
+            "average temperature": tempTemperature,
+            "average windspeed": tempWindSpeed,
+            "average rainfall level": tempRainfall,
+            maxUV: this.uvData[j].maxUV,
+            maxUVTime: this.uvData[j].maxUVTime,
+            sunriseStart: this.uvData[j].sunriseStart,
+            sunriseEnd: this.uvData[j].sunriseEnd,
+            sunsetStart: this.uvData[j].sunsetStart,
+            sunsetEnd: this.uvData[j].sunsetEnd,
+          };
+          resolve();
+        });
+      },
+
+      /*
+       *   Gets average temperature level over the next 4 days to inform user what type of whether to pack for
+       *   Reusing averages from each day to speed up performance instead of calculating all over again from 32 data points
+       */
+      getAverageTemperatureOver4Days: function () {
+        return new Promise((resolve, reject) => {
+          let tempTemperature = 0;
+          for (const item of this.tableDataOf4Days) {
+            tempTemperature += item["average temperature"];
+          }
+          tempTemperature /= this.tableDataOf4Days.length; // get average temperature of next 4 days
+          this.average4DayTemperature = Number(tempTemperature.toFixed(2)); // round temperature to 2 decimal places
+          resolve(this.average4DayTemperature);
+          reject(new Error("cannot get average temperature"));
+        });
+      },
+    },
+  });
+</script>

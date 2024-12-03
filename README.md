@@ -1,1 +1,1 @@
-# open-weather-api
+# weather-api
